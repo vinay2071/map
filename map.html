@@ -1,0 +1,621 @@
+<!--
+  Copyright 2021 Google LLC
+
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use this file except in compliance with the License.
+  You may obtain a copy of the License at
+
+      https://www.apache.org/licenses/LICENSE-2.0
+
+  Unless required by applicable law or agreed to in writing, software
+  distributed under the License is distributed on an "AS IS" BASIS,
+  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+  See the License for the specific language governing permissions and
+  limitations under the License.
+-->
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Hotles Near You</title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=default"></script>
+    <script src="https://www.gstatic.com/external_hosted/handlebars/v4.7.6/handlebars.min.js"></script>
+    <link href="https://fonts.googleapis.com/css?family=Roboto" rel="stylesheet">
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+      }
+
+      #map-container {
+        width: 100%;
+        height: 100%;
+        position: relative;
+        font-family: "Roboto", sans-serif;
+        box-sizing: border-box;
+      }
+
+      #map-container button {
+        background: none;
+        color: inherit;
+        border: none;
+        padding: 0;
+        font: inherit;
+        font-size: inherit;
+        cursor: pointer;
+      }
+
+      #map {
+        position: absolute;
+        left: 22em;
+        top: 0;
+        right: 0;
+        bottom: 0;
+      }
+
+      #locations-panel {
+        position: absolute;
+        left: 0;
+        width: 22em;
+        top: 0;
+        bottom: 0;
+        overflow-y: auto;
+        background: white;
+        padding: 0.5em;
+        box-sizing: border-box;
+      }
+
+      @media only screen and (max-width: 876px) {
+        #map {
+          left: 0;
+          bottom: 50%;
+        }
+
+        #locations-panel {
+          top: 50%;
+          right: 0;
+          width: unset;
+        }
+      }
+
+      #locations-panel-list > header {
+        padding: 1.4em 1.4em 0 1.4em;
+      }
+
+      #locations-panel-list h1.search-title {
+        font-size: 1em;
+        font-weight: 500;
+        margin: 0;
+      }
+
+      #locations-panel-list h1.search-title > img {
+        vertical-align: bottom;
+        margin-top: -1em;
+      }
+
+      #locations-panel-list .search-input {
+        width: 100%;
+        margin-top: 0.8em;
+        position: relative;
+      }
+
+      #locations-panel-list .search-input input {
+        width: 100%;
+        border: 1px solid rgba(0, 0, 0, 0.2);
+        border-radius: 0.3em;
+        height: 2.2em;
+        box-sizing: border-box;
+        padding: 0 2.5em 0 1em;
+        font-size: 1em;
+      }
+
+      #locations-panel-list .search-input-overlay {
+        position: absolute;
+      }
+
+      #locations-panel-list .search-input-overlay.search {
+        right: 2px;
+        top: 2px;
+        bottom: 2px;
+        width: 2.4em;
+      }
+
+      #locations-panel-list .search-input-overlay.search button {
+        width: 100%;
+        height: 100%;
+        border-radius: 0.2em;
+        color: black;
+        background: transparent;
+      }
+
+      #locations-panel-list .search-input-overlay.search .icon {
+        margin-top: 0.05em;
+        vertical-align: top;
+      }
+
+      #locations-panel-list .section-name {
+        font-weight: 500;
+        font-size: 0.9em;
+        margin: 1.8em 0 1em 1.5em;
+      }
+
+      #locations-panel-list .location-result {
+        position: relative;
+        padding: 0.8em 3.5em 0.8em 1.4em;
+        border-bottom: 1px solid rgba(0, 0, 0, 0.12);
+        cursor: pointer;
+      }
+
+      #locations-panel-list .location-result:first-of-type {
+        border-top: 1px solid rgba(0, 0, 0, 0.12);
+      }
+
+      #locations-panel-list .location-result:last-of-type {
+        border-bottom: none;
+      }
+
+      #locations-panel-list .location-result.selected {
+        outline: 2px solid #4285f4;
+      }
+
+      #locations-panel-list button.select-location {
+        margin-bottom: 0.6em;
+        text-align: left;
+      }
+
+      #locations-panel-list .location-result h2.name {
+        font-size: 1em;
+        font-weight: 500;
+        margin: 0;
+      }
+
+      #locations-panel-list .location-result .address {
+        font-size: 0.9em;
+        margin-bottom: 0.5em;
+      }
+
+      #locations-panel-list .location-result .distance {
+        position: absolute;
+        top: 0.9em;
+        right: 0;
+        text-align: center;
+        font-size: 0.9em;
+        width: 5em;
+      }
+
+      #location-results-list {
+        list-style-type: none;
+        margin: 0;
+        padding: 0;
+      }
+    </style>
+    <script>
+      'use strict';
+
+      /**
+       * Defines an instance of the Locator+ solution, to be instantiated
+       * when the Maps library is loaded.
+       */
+      function LocatorPlus(configuration) {
+        const locator = this;
+
+        locator.locations = configuration.locations || [];
+        locator.capabilities = configuration.capabilities || {};
+
+        const mapEl = document.getElementById('map');
+        const panelEl = document.getElementById('locations-panel');
+        locator.panelListEl = document.getElementById('locations-panel-list');
+        const sectionNameEl =
+            document.getElementById('location-results-section-name');
+        const resultsContainerEl = document.getElementById('location-results-list');
+
+        const itemsTemplate = Handlebars.compile(
+            document.getElementById('locator-result-items-tmpl').innerHTML);
+
+        locator.searchLocation = null;
+        locator.searchLocationMarker = null;
+        locator.selectedLocationIdx = null;
+        locator.userCountry = null;
+
+        // Initialize the map -------------------------------------------------------
+        locator.map = new google.maps.Map(mapEl, configuration.mapOptions);
+
+        // Store selection.
+        const selectResultItem = function(locationIdx, panToMarker, scrollToResult) {
+          locator.selectedLocationIdx = locationIdx;
+          for (let locationElem of resultsContainerEl.children) {
+            locationElem.classList.remove('selected');
+            if (getResultIndex(locationElem) === locator.selectedLocationIdx) {
+              locationElem.classList.add('selected');
+              if (scrollToResult) {
+                panelEl.scrollTop = locationElem.offsetTop;
+              }
+            }
+          }
+          if (panToMarker && (locationIdx != null)) {
+            locator.map.panTo(locator.locations[locationIdx].coords);
+          }
+        };
+
+        // Create a marker for each location.
+        const markers = locator.locations.map(function(location, index) {
+          const marker = new google.maps.Marker({
+            position: location.coords,
+            map: locator.map,
+            title: location.title,
+          });
+          marker.addListener('click', function() {
+            selectResultItem(index, false, true);
+          });
+          return marker;
+        });
+
+        // Fit map to marker bounds.
+        locator.updateBounds = function() {
+          const bounds = new google.maps.LatLngBounds();
+          if (locator.searchLocationMarker) {
+            bounds.extend(locator.searchLocationMarker.getPosition());
+          }
+          for (let i = 0; i < markers.length; i++) {
+            bounds.extend(markers[i].getPosition());
+          }
+          locator.map.fitBounds(bounds);
+        };
+        if (locator.locations.length) {
+          locator.updateBounds();
+        }
+
+        // Get the distance of a store location to the user's location,
+        // used in sorting the list.
+        const getLocationDistance = function(location) {
+          if (!locator.searchLocation) return null;
+
+          // Use travel distance if available (from Distance Matrix).
+          if (location.travelDistanceValue != null) {
+            return location.travelDistanceValue;
+          }
+
+          // Fall back to straight-line distance.
+          return google.maps.geometry.spherical.computeDistanceBetween(
+              new google.maps.LatLng(location.coords),
+              locator.searchLocation.location);
+        };
+
+        // Render the results list --------------------------------------------------
+        const getResultIndex = function(elem) {
+          return parseInt(elem.getAttribute('data-location-index'));
+        };
+
+        locator.renderResultsList = function() {
+          let locations = locator.locations.slice();
+          for (let i = 0; i < locations.length; i++) {
+            locations[i].index = i;
+          }
+          if (locator.searchLocation) {
+            sectionNameEl.textContent =
+                'Nearest locations (' + locations.length + ')';
+            locations.sort(function(a, b) {
+              return getLocationDistance(a) - getLocationDistance(b);
+            });
+          } else {
+            sectionNameEl.textContent = `All locations (${locations.length})`;
+          }
+          const resultItemContext = { locations: locations };
+          resultsContainerEl.innerHTML = itemsTemplate(resultItemContext);
+          for (let item of resultsContainerEl.children) {
+            const resultIndex = getResultIndex(item);
+            if (resultIndex === locator.selectedLocationIdx) {
+              item.classList.add('selected');
+            }
+
+            const resultSelectionHandler = function() {
+              selectResultItem(resultIndex, true, false);
+            };
+
+            // Clicking anywhere on the item selects this location.
+            // Additionally, create a button element to make this behavior
+            // accessible under tab navigation.
+            item.addEventListener('click', resultSelectionHandler);
+            item.querySelector('.select-location')
+                .addEventListener('click', function(e) {
+                  resultSelectionHandler();
+                  e.stopPropagation();
+                });
+          }
+        };
+
+        // Optional capability initialization --------------------------------------
+        initializeSearchInput(locator);
+        initializeDistanceMatrix(locator);
+
+        // Initial render of results -----------------------------------------------
+        locator.renderResultsList();
+      }
+
+      /** When the search input capability is enabled, initialize it. */
+      function initializeSearchInput(locator) {
+        const geocodeCache = new Map();
+        const geocoder = new google.maps.Geocoder();
+
+        const searchInputEl = document.getElementById('location-search-input');
+        const searchButtonEl = document.getElementById('location-search-button');
+
+        const updateSearchLocation = function(address, location) {
+          if (locator.searchLocationMarker) {
+            locator.searchLocationMarker.setMap(null);
+          }
+          if (!location) {
+            locator.searchLocation = null;
+            return;
+          }
+          locator.searchLocation = {'address': address, 'location': location};
+          locator.searchLocationMarker = new google.maps.Marker({
+            position: location,
+            map: locator.map,
+            title: 'My location',
+            icon: {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 12,
+              fillColor: '#3367D6',
+              fillOpacity: 0.5,
+              strokeOpacity: 0,
+            }
+          });
+
+          // Update the locator's idea of the user's country, used for units. Use
+          // `formatted_address` instead of the more structured `address_components`
+          // to avoid an additional billed call.
+          const addressParts = address.split(' ');
+          locator.userCountry = addressParts[addressParts.length - 1];
+
+          // Update map bounds to include the new location marker.
+          locator.updateBounds();
+
+          // Update the result list so we can sort it by proximity.
+          locator.renderResultsList();
+
+          locator.updateTravelTimes();
+        };
+
+        const geocodeSearch = function(query) {
+          if (!query) {
+            return;
+          }
+
+          const handleResult = function(geocodeResult) {
+            searchInputEl.value = geocodeResult.formatted_address;
+            updateSearchLocation(
+                geocodeResult.formatted_address, geocodeResult.geometry.location);
+          };
+
+          if (geocodeCache.has(query)) {
+            handleResult(geocodeCache.get(query));
+            return;
+          }
+          const request = {address: query, bounds: locator.map.getBounds()};
+          geocoder.geocode(request, function(results, status) {
+            if (status === 'OK') {
+              if (results.length > 0) {
+                const result = results[0];
+                geocodeCache.set(query, result);
+                handleResult(result);
+              }
+            }
+          });
+        };
+
+        // Set up geocoding on the search input.
+        searchButtonEl.addEventListener('click', function() {
+          geocodeSearch(searchInputEl.value.trim());
+        });
+
+        // Initialize Autocomplete.
+        initializeSearchInputAutocomplete(
+            locator, searchInputEl, geocodeSearch, updateSearchLocation);
+      }
+
+      /** Add Autocomplete to the search input. */
+      function initializeSearchInputAutocomplete(
+          locator, searchInputEl, fallbackSearch, searchLocationUpdater) {
+        // Set up Autocomplete on the search input. Bias results to map viewport.
+        const autocomplete = new google.maps.places.Autocomplete(searchInputEl, {
+          types: ['geocode'],
+          fields: ['place_id', 'formatted_address', 'geometry.location']
+        });
+        autocomplete.bindTo('bounds', locator.map);
+        autocomplete.addListener('place_changed', function() {
+          const placeResult = autocomplete.getPlace();
+          if (!placeResult.geometry) {
+            // Hitting 'Enter' without selecting a suggestion will result in a
+            // placeResult with only the text input value as the 'name' field.
+            fallbackSearch(placeResult.name);
+            return;
+          }
+          searchLocationUpdater(
+              placeResult.formatted_address, placeResult.geometry.location);
+        });
+      }
+
+      /** Initialize Distance Matrix for the locator. */
+      function initializeDistanceMatrix(locator) {
+        const distanceMatrixService = new google.maps.DistanceMatrixService();
+
+        // Annotate travel times to the selected location using Distance Matrix.
+        locator.updateTravelTimes = function() {
+          if (!locator.searchLocation) return;
+
+          const units = (locator.userCountry === 'USA') ?
+              google.maps.UnitSystem.IMPERIAL :
+              google.maps.UnitSystem.METRIC;
+          const request = {
+            origins: [locator.searchLocation.location],
+            destinations: locator.locations.map(function(x) {
+              return x.coords;
+            }),
+            travelMode: google.maps.TravelMode.DRIVING,
+            unitSystem: units,
+          };
+          const callback = function(response, status) {
+            if (status === 'OK') {
+              const distances = response.rows[0].elements;
+              for (let i = 0; i < distances.length; i++) {
+                const distResult = distances[i];
+                let travelDistanceText, travelDistanceValue;
+                if (distResult.status === 'OK') {
+                  travelDistanceText = distResult.distance.text;
+                  travelDistanceValue = distResult.distance.value;
+                }
+                const location = locator.locations[i];
+                location.travelDistanceText = travelDistanceText;
+                location.travelDistanceValue = travelDistanceValue;
+              }
+
+              // Re-render the results list, in case the ordering has changed.
+              locator.renderResultsList();
+            }
+          };
+          distanceMatrixService.getDistanceMatrix(request, callback);
+        };
+      }
+    </script>
+    <script>
+      const CONFIGURATION = {
+        "locations": [
+          {"title":"Shah Ghouse Hotel","address1":"Highway Colony Chandrapuri Colony Mansoorabad","address2":"Vijayawada Hwy, Saraswati Nagar, Chandrapuri Colony, Bahadurguda, Hyderabad, Telangana 500074, India","coords":{"lat":17.34367047934109,"lng":78.55579969933623},"placeId":"ChIJJdFk9ySjyzsRITpbN0aEeBU"},
+          {"title":"Bhagavatula Paradise Lane","address1":"Bhagavatula Paradise Ln","address2":"Aditya Nagar, Gurram Guda, Hyderabad, Telangana 501510, India","coords":{"lat":17.29016794634246,"lng":78.57109016441804},"placeId":"ElZCaGFnYXZhdHVsYSBQYXJhZGlzZSBMbiwgQWRpdHlhIE5hZ2FyLCBHdXJyYW0gR3VkYSwgSHlkZXJhYmFkLCBUZWxhbmdhbmEgNTAxNTEwLCBJbmRpYSIuKiwKFAoSCS1fScB-ocs7EfAF9kOz5NibEhQKEgnVwdPbf6HLOxFi6V-zR-v_lw"},
+          {"title":"Paradise","address1":"Paradise","address2":"IMAX Rd, Central Secretariat, Khairtabad, Hyderabad, Telangana 500004, India","coords":{"lat":17.41233502463563,"lng":78.46542360489349},"placeId":"ChIJx0MjHluXyzsR0NnUGYktWAY"},
+          {"title":"Bawarchi Restaurant","address1":"Plot No. 44","address2":"RTC X Rd, Opposite Sandhya Theatre, Jawahar Nagar, Chikkadpally, New Nallakunta, Hyderabad, Telangana 500020, India","coords":{"lat":17.40647126521147,"lng":78.49774697976227},"placeId":"ChIJC5GIs-qZyzsRkIIAl7PFxwc"},
+          {"title":"Red Fox Hotel, Hyderabad","address1":"Survey No. 64","address2":"Plot No. 2, Hitech City Main Rd, Phase 2, HITEC City, Madhapur, Telangana 500081, India","coords":{"lat":17.44327023831717,"lng":78.376661664418},"placeId":"ChIJEQjTFueTyzsRNlGMHopAjpE"},
+          {"title":"Lemon Tree Premier, HITEC City, Hyderabad","address1":"Plot No. 2","address2":"Survey No. 64, Hitech City Rd, Phase 2, HITEC City, Hyderabad, Telangana 500081, India","coords":{"lat":17.443427278015808,"lng":78.37668043558199},"placeId":"ChIJ7cHsueGTyzsRUoEIWi33RLM"},
+          {"title":"Novotel Hyderabad Airport","address1":"R. Gandhi International Airport","address2":"Shamshabad, Hyderabad, Telangana 500108, India","coords":{"lat":17.24215191641939,"lng":78.45477657790987},"placeId":"ChIJ_7boUKC8yzsRY9AMzjILX7Q"},
+          {"title":"Novotel Hyderabad Convention Centre","address1":"P.O Bag 1101","address2":"near Hitec City, Izzathnagar, Kondapur, Telangana 500081, India","coords":{"lat":17.473162408534595,"lng":78.37381159325409},"placeId":"ChIJqfUnCjKSyzsRmxVciMDp__c"},
+          {"title":"Shawarma Zone","address1":"Hanuman Nagar Garden II","address2":"Nagole, Hyderabad, Telangana 500068, India","coords":{"lat":17.374274822422187,"lng":78.56174570674591},"placeId":"ChIJ-2CzbaOZyzsRMlxql691j9M"},
+          {"title":"The Park Hyderabad","address1":"The Park Hyderabad","address2":"Raj Bhavan Rd, Lumbini Classic Apartment, Somajiguda, Hyderabad, Telangana 500082, India","coords":{"lat":17.423689478611667,"lng":78.46213315092619},"placeId":"ChIJcdOPoE2XyzsRArHA_YHl46Q"},
+          {"title":"KFC","address1":"Sy No 3/6/552/558","address2":"MPM Millenium Mall, Himayatnagar, Hyderabad, Telangana 500029, India","coords":{"lat":17.40165768383634,"lng":78.4858462490738},"placeId":"ChIJvxvtfNiZyzsRnMRbLzW75Zg"},
+          {"title":"KFC","address1":"H No 5/9/322","address2":"TS No 86, Ward No 51, GF, F Block, Abids Road, Gun Foundry, Basheer Bagh, Hyderabad, Telangana 500001, India","coords":{"lat":17.395260537435444,"lng":78.47595609325408},"placeId":"ChIJSR5xcaqZyzsRfF2z6F6TLtI"},
+          {"title":"Mcdonalds","address1":"Lower Ground Floor","address2":"Hydetrabad Central Mall Muncipal no. 6-3-673, 673 / 1 674, 674 / 1, 675 / 1 to 675, NH65, Durga Nagar Colony, Punjagutta, Hyderabad, Telangana 500082, India","coords":{"lat":17.426773906261182,"lng":78.45315307790983},"placeId":"ChIJBx5kULWQyzsRItsFwqKsMAY"},
+          {"title":"McDonald\u0027s","address1":"Survey No 55 \u0026 56","address2":"15, 8, Hyderabad - Jangam Hwy, Dharmapuri, Bahadurguda, Saroornagar, Telangana 500074, India","coords":{"lat":17.342834912412034,"lng":78.55588619325405},"placeId":"ChIJNXqbjaiYyzsRBt_iQLiEdL0"},
+          {"title":"McDonald\u0027s","address1":"Ground Floor","address2":"SPG Hotel, Bashirabad, Kompally, Hyderabad, Telangana 500096, India","coords":{"lat":17.51584440238515,"lng":78.48080700674589},"placeId":"ChIJDzbE4y-byzsRh-ahxzxVluY"},
+          {"title":"Hotel","address1":"Vikarabad-Pargi Rd","address2":"Yennapally, Vikarabad, Telangana 501101, India","coords":{"lat":17.330860386992345,"lng":77.91887463558199},"placeId":"ChIJp8KgcI5fyTsRAAAA0NEMNjw"},
+          {"title":"Hotel Shanti Sagar","address1":"Plot No -68/B","address2":"Opp New Collectorate, Sangareddy Abids, Hyderabad, Telangana 502001, India","coords":{"lat":17.595436740364587,"lng":78.08435417790983},"placeId":"ChIJ27JukIv5yzsRKXWhx4VOQNA"},
+          {"title":"Hotel Bangalore Days","address1":"No-23","address2":"2 Patriot Plaza, Hesarghatta Main Road, Near Sambharam College In between MS palya and Lakshmipura Cross, Vidyaranyapura, Bengaluru, Karnataka 560097, India","coords":{"lat":13.09050963182859,"lng":77.54084334722135},"placeId":"ChIJ2SuNMqYjrjsRIj3TELsdbcg"},
+          {"title":"Hotel Bangalore Gate","address1":"9 \u0026 12","address2":"Gajanana Towers , Kempe Gowda Road Opposite Menaka Theater, near Mysore Bank Circle, Anchepet, Chickpet, Bengaluru, Karnataka 560009, India","coords":{"lat":12.97381064403868,"lng":77.57919906441803},"placeId":"ChIJQ_bMnw4WrjsRji29_auRFEo"},
+          {"title":"Hotel Bangalore Inn","address1":"24/1 Ferns City Road","address2":"Outer Ring Rd, Ferns City, Doddanekundi, Marathahalli, Bengaluru, Karnataka 560037, India","coords":{"lat":12.978812959513304,"lng":77.6975430067459},"placeId":"ChIJjfpoxHgRrjsRvhmMT8Lsoeo"},
+          {"title":"Bangalore Palace","address1":"Vasanth Nagar","address2":"Bengaluru, Karnataka 560052, India","coords":{"lat":12.998947506114213,"lng":77.59212319325408},"placeId":"ChIJN1ZKKUkWrjsRzxIVM363-LE"},
+          {"title":"Hotel Green Park","address1":"N.S.K. Salai","address2":"Arcot Rd, Vadapalani, Chennai, Tamil Nadu 600026, India","coords":{"lat":13.051208691130329,"lng":80.20830636441804},"placeId":"ChIJsQVdIcJmUjoRb7SYkLj2mMk"},
+          {"title":"Hotel Palmgrove","address1":"13","address2":"Kodambakkam High Rd, Tirumurthy Nagar, Nungambakkam, Chennai, Tamil Nadu 600034, India","coords":{"lat":13.0530715727804,"lng":80.24794569325408},"placeId":"ChIJyTrSZERmUjoR82JKb_5pW3c"},
+          {"title":"Hotel Maris","address1":"11","address2":"Cathedral Rd, Parthasarathypuram, Gopalapuram, Chennai, Tamil Nadu 600086, India","coords":{"lat":13.045245454741464,"lng":80.25772763558199},"placeId":"ChIJhdCrBTdmUjoREUmBvCe3ayc"},
+          {"title":"Hotel Ambica Empire","address1":"79","address2":"Jawaharlal Nehru Rd, Thiru Nagar Colony, NGO Colony, Vadapalani, Chennai, Tamil Nadu 600026, India","coords":{"lat":13.055769494852708,"lng":80.21116013558198},"placeId":"ChIJrV9qfUteUjoR1kJK_CZdxVE"},
+          {"title":"Budget Hotels in Chennai- Hotel Mallika Residency near US Consulate and Chennai Railway Station","address1":"No: 14","address2":"Meeran Sahib St, Mount Road, Chintadripet, Chennai, Tamil Nadu 600002, India","coords":{"lat":13.06956597330754,"lng":80.27004947790985},"placeId":"ChIJ8cV-ZxtmUjoREd1o_oTzEdA"},
+          {"title":"Hotels in mumbai by Great journey\u0027s","address1":"Near Chhatrapati Shivaji International airport","address2":"Andheri East Bhoomi Heights, Jarimari, Mumbai, Maharashtra 400099, India","coords":{"lat":19.090520441165204,"lng":72.88255927790983},"placeId":"ChIJz05XKUvp5zsRiLlLhf4fcEg"},
+          {"title":"Hotel Bawa International","address1":"Near","address2":"Plot No, T1, 2087, Nehru Rd, Navpada, Vile Parle East, Vile Parle, Mumbai, Maharashtra 400099, India","coords":{"lat":19.09653272997755,"lng":72.85377142209013},"placeId":"ChIJRZOtGk3I5zsRKh-bw3zVhlU"},
+          {"title":"Hotel Sahara Star","address1":"Nehru Rd","address2":"opp. Domestic Airport, Navpada, Vile Parle East, Vile Parle, Mumbai, Maharashtra 400099, India","coords":{"lat":19.09575762743928,"lng":72.8538135067459},"placeId":"ChIJL2EDdq7J5zsR3sne5yFwzRM"},
+          {"title":"Hotel Sai Palace Grand","address1":"12","address2":"New Link Rd, Malad, Evershine Nagar, Malad West, Mumbai, Maharashtra 400064, India","coords":{"lat":19.189416509873762,"lng":72.83505514232787},"placeId":"ChIJSTtuuO625zsRXxRt7YowcCU"},
+          {"title":"Hotel Apollo Dimora","address1":"Opp. Central Railway Station","address2":"Overbridge, Thampanoor, Thiruvananthapuram, Kerala 695001, India","coords":{"lat":8.489126896740151,"lng":76.95097774232785},"placeId":"ChIJ45D40KW7BTsRtP_CnoND3Pc"},
+          {"title":"Hotel","address1":"Nh66 Alamcode","address2":"Alamcode, Kerala 695102, India","coords":{"lat":8.720482892302035,"lng":76.81297298650817},"placeId":"ChIJha7wl8TpBTsRAAAAMDqszSQ"},
+          {"title":"SP Grand Days","address1":"Panavila Road Near New Flyover Thycaud","address2":"Panavila, Junction, Thiruvananthapuram, Kerala 695014, India","coords":{"lat":8.496256488584429,"lng":76.95556030674591},"placeId":"ChIJl0pr4rC7BTsRnN_CvehCuSA"},
+          {"title":"Hotels in karol bagh","address1":"48","address2":"Saraswati Marg, Block 15A, WEA, Karol Bagh, New Delhi, Delhi 110005, India","coords":{"lat":28.646722728040533,"lng":77.18861406441803},"placeId":"ChIJW4mcdLcDDTkRrwzd_hSmVj4"},
+          {"title":"Taj Hotel \u0026 Convention Centre, Agra","address1":"Taj East Gate Rd","address2":"Taj Nagari Phase 1, Telipara, Tajganj, Agra, Uttar Pradesh 282001, India","coords":{"lat":27.16295278798688,"lng":78.05652643558197},"placeId":"ChIJ2eT-VA5xdDkRTXIbsqsMxZ8"},
+          {"title":"Hotel Grand","address1":"Peoples Campus","address2":"Bhanpur, Bhopal, Madhya Pradesh 462037, India","coords":{"lat":23.309866830463708,"lng":77.4105092067459},"placeId":"ChIJCW4K-f1ofDkR76XqREqyu-I"},
+          {"title":"Hotel Hindusthan International","address1":"235","address2":"1, Acharya Jagadish Chandra Bose Rd, Sreepally, Elgin, Kolkata, West Bengal 700020, India","coords":{"lat":22.54111515217527,"lng":88.35032333558196},"placeId":"ChIJxVLlZhh3AjoRg95iUsjVPT8"},
+          {"title":"Hotel","address1":"Chinar Park","address2":"Dash Drone, Newtown, Kolkata, West Bengal 700157, India","coords":{"lat":22.624832331205617,"lng":88.44814513558197},"placeId":"ChIJfyMY2wOf-DkRs7X-dKHp5fA"},
+          {"title":"Hotels in Delhi India","address1":"222 Jaina Tower - II","address2":"District Center Janakpuri, Janakpuri District Center, Janakpuri, New Delhi, Delhi 110058, India","coords":{"lat":28.629403892370927,"lng":77.08211803558197},"placeId":"ChIJAQAwHL8EDTkRAgbIGHRI_-c"},
+        ],
+        "mapOptions": {"center":{"lat":38.0,"lng":-100.0},"fullscreenControl":true,"mapTypeControl":false,"streetViewControl":false,"zoom":4,"zoomControl":true,"maxZoom":17},
+        "mapsApiKey": "AIzaSyACxL5Qd3gp4-wYl5tOjiYTlIqXRvQbIAc"
+      };
+
+      function initMap() {
+        new LocatorPlus(CONFIGURATION);
+      }
+    </script>
+    <script id="locator-result-items-tmpl" type="text/x-handlebars-template">
+      {{#each locations}}
+        <li class="location-result" data-location-index="{{index}}">
+          <button class="select-location">
+            <h2 class="name">{{title}}</h2>
+          </button>
+          <div class="address">{{address1}}<br>{{address2}}</div>
+          {{#if travelDistanceText}}
+            <div class="distance">{{travelDistanceText}}</div>
+          {{/if}}
+        </li>
+      {{/each}}
+    </script>
+  </head>
+  <body>
+    <div id="map-container">
+      <div id="locations-panel">
+        <div id="locations-panel-list">
+          <header>
+            <h1 class="search-title">
+              <img src="https://fonts.gstatic.com/s/i/googlematerialicons/place/v15/24px.svg"/>
+              Find a location near you
+            </h1>
+            <div class="search-input">
+              <input id="location-search-input" placeholder="Enter your address or zip code">
+              <div id="search-overlay-search" class="search-input-overlay search">
+                <button id="location-search-button">
+                  <img class="icon" src="https://fonts.gstatic.com/s/i/googlematerialicons/search/v11/24px.svg" alt="Search"/>
+                </button>
+              </div>
+            </div>
+          </header>
+          <div class="section-name" id="location-results-section-name">
+            All locations
+          </div>
+          <div class="results">
+            <ul id="location-results-list"></ul>
+          </div>
+        </div>
+      </div>
+      <div id="map"></div>
+    </div>
+    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyACxL5Qd3gp4-wYl5tOjiYTlIqXRvQbIAc&callback=initMap&libraries=places,geometry&solution_channel=GMP_QB_locatorplus_v4_cABD" async defer></script>
+  </body>
+</html>
+
+<!-- let output;
+fetch(
+`https://maps.googleapis.com/maps/api/geocode/json?address=${address_variable}&key=AIzaSyACxL5Qd3gp4-wYl5tOjiYTlIqXRvQbIAc`).then(res =>
+            res.json()).then(data => {
+            output=data
+	    console.log(output)   
+            }).catch((e)=>{
+console.log(e)
+})
+
+lat_1= output.geometry.location.lat;
+lng_1=output.geometry.location.lng;
+place_id_1=output.place_id;
+
+JSONObject coords_1= new JSONObject();
+coords_1.put("lat",lat_1 );
+coords_1.put("lng", lng_1);
+
+String message;
+JSONObject json = new JSONObject();
+
+json.put("title",);
+json.put("address1",);
+json.put("address2",);
+json.put("coords","coords_1");
+json.put("placeId",place_id_1);
+{"title":"Hotels in Delhi India","address1":"222 Jaina Tower - II","address2":"District Center Janakpuri, Janakpuri District Center, Janakpuri, New Delhi, Delhi 110058, India","coords":{"lat":28.629403892370927,"lng":77.08211803558197},"placeId":"ChIJAQAwHL8EDTkRAgbIGHRI_-c"},
+console.log(json);
+var locationarr=CONFIGURATION.locations[];
+const obj=JSON.parse(locationarr);
+obj["locations"].push(json);
+locationarr=JSON.stringify(obj);
+ -->
+
+
+
+
+
+
+
+
+
